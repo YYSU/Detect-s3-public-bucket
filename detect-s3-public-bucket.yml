@@ -1,0 +1,143 @@
+Description: |
+  This template is used to detect whether there is any s3 public bucket in your AWS account.
+  It will create a CloudWatch Events rule that triggers lambda function every half and hour to check your bucket status.
+  If there is any public bucket in S3. It will send sms message to your phone to notify you.
+Parameters:
+  PhoneNumber:
+    Type: "String"
+    Description: "Enter the country code, followed by the full phone number.(For example. +886988123456)"
+    AllowedPattern: ^\+?[1-9]\d{1,14}$
+Resources:
+  #Lambda
+  DetectS3PublicBucketFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import os
+          import json
+          import sys
+          import logging
+          import boto3
+          from botocore.exceptions import ClientError
+
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+              
+          def check_acl(s3_client, bucket, all_public_bucket):
+              public_URI = 'http://acs.amazonaws.com/groups/global/AllUsers'
+              try:
+                  acl = s3_client.get_bucket_acl(Bucket=bucket)
+                  grant_list = acl['Grants']
+                  
+                  for grant in grant_list:
+                      if "URI" in grant["Grantee"]:
+                          if grant["Grantee"]["URI"] == public_URI:
+                              all_public_bucket.add(bucket)
+                              logger.debug("Found public bucket: {}".format(bucket))
+                              return True
+              except ClientError as e:
+                  pass
+              return False
+
+
+          def check_policy(s3_client, bucket, all_public_bucket):
+              try:
+                  if s3_client.get_bucket_policy_status(Bucket=bucket)["PolicyStatus"]["IsPublic"]:
+                      all_public_bucket.add(bucket)
+                      logger.debug("Found public bucket: {}".format(bucket))
+                      return True
+              except ClientError as e:
+                  pass # means no bucket policy
+              return False
+              
+
+          def lambda_handler(event, context):
+              s3_client = boto3.client('s3')
+              all_bucket_list = s3_client.list_buckets()["Buckets"]
+              all_public_bucket = set()
+
+              for bucket in all_bucket_list:
+                  public_or_not = False
+                  if not check_acl(s3_client, bucket["Name"], all_public_bucket):
+                      public_or_not = check_policy(s3_client, bucket["Name"], all_public_bucket)
+                  else:
+                      public_or_not = True
+                  logger.info("{}, whether it is public : {}".format(bucket["Name"], str(public_or_not)))
+              
+              for public in all_public_bucket:
+                  logger.info("Found public bucket : {}".format(public))
+                  
+              # if found public s3 bucket, send message to notify
+              if all_public_bucket:
+                  sns_client = boto3.client('sns')
+                  phone_number = "${PhoneNumber}"
+                  message='\nHello, we detect that your aws account have PUBLIC BUCKET in s3「{}」 \nPlease turn off it ASAP!\nThis message is from "detect-s3-public-bucket"'.format(','.join(all_public_bucket))
+                  subject='[Important][Must read] You have opend public bucket !!!!! '
+                  sns_client.publish(
+                      PhoneNumber=phone_number,
+                      Message=message,
+                      Subject=subject,
+                  )
+                  logger.info("Send the notify to owner")
+              else:
+                  logger.info("Pass the detection")
+      Handler: 'index.lambda_handler'
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      Runtime: python3.6
+      Timeout: 900
+  # IAM role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: need-permission
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:Get*
+                  - s3:List*
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:*
+                Resource: '*'
+  # Lambda Permission
+  InvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt "DetectS3PublicBucketFunction.Arn"
+      Action: lambda:InvokeFunction
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt "CloudWatchSchduledRule.Arn"
+  # CloudWatch
+  CloudWatchSchduledRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: ScheduledRule
+      Name: DetectS3PublicRule
+      ScheduleExpression: rate(90 minutes)
+      State: ENABLED
+      Targets: 
+        - Arn: !GetAtt 'DetectS3PublicBucketFunction.Arn'
+          Id: DetectS3PublicBucketFunctionV1
+
