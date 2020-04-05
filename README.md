@@ -9,6 +9,9 @@ This template is used to detect whether you have "Public" bucket in S3. It will 
 - Lambda Permission
 - IAM Role
 
+## Architecture
+![image](https://github.com/YYSU/Detect-s3-public-bucket/blob/master/Detect-s3-public-bucket.png)
+
 
 # How to use this template
 1. Download the “detect-s3-public-bucket.yml” from this repository
