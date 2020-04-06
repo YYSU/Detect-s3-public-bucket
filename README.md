@@ -18,7 +18,7 @@ This template is used to detect whether you have "Public" bucket in S3. It will 
 
 2. Open AWS CloudFormation Console, and click “Create stack“ -> “With new resources (standard) ”
 
-3. Click “Upload a template file” and upload the “template.json”. Click “Next”
+3. Click “Upload a template file” and upload the “detect-s3-public-bucket.yml”. Click “Next”
 
 4. Fill in the “Stack name“ and “Parameters”. Click “Next”.
 
